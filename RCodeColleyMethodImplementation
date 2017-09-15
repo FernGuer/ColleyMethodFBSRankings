@@ -127,9 +127,9 @@ Colley = function(Year){
   #orders the solution by Colley score
   Solution <- solution[ order(-solution[,2], solution[,1]),]
   
-  #prints the final product, "Solution"
-  print(Solution)
-}
+  return(Solution)
+  
+  }
 
 #Input year as parameter, resulting the FBS rankings for eligible teams
 2010_Rankings = Colley(2010)
