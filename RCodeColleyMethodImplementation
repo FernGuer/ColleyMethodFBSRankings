@@ -1,0 +1,135 @@
+df1 = data.frame()
+
+#for a given subset of years to evaluate, e.g. 2010-2016
+for(Year in XXXX:XXXX){
+  df2 = read.fwf(paste("http://homepages.cae.wisc.edu/~dwilson/rsfc/history/howell/cf",Year,"gms.txt",sep=""), widths = c(10,29,2,29,3,18),col.names=c("Date","AwayTeam","AwayScore","HomeTeam","HomeScore","Location"))
+  list1 = rep(Year,nrow(df2))
+  df2 = cbind("Season"=list1, df2)
+  df1 = rbind(df1,df2)
+}
+
+AwayTeam = gsub(" ","",df1$AwayTeam)
+HomeTeam = gsub(" ","",df1$HomeTeam)
+df1$AwayTeam = AwayTeam
+df1$HomeTeam = HomeTeam
+
+#optional intermediate step to avoid re-downloading all data
+save.image(file="FBSGameData.RData")
+load(file="FBSGameData.RData")
+
+Colley = function(Year){
+
+  #generates a dataframe for a season you specify
+  Season = function(Year){
+    Seasondf = df1[df1$Season == Year,]
+    return(Seasondf)
+  }
+  Seasondf = data.frame(Season(Year))
+  
+  #compiles a list of all teams for a given year  
+  AwayTms = data.frame(table(Seasondf$AwayTeam))
+  HomeTms = data.frame(table(Seasondf$HomeTeam))
+  AllTms = merge(AwayTms,HomeTms,by="Var1",all=TRUE)
+  AllTms[is.na(AllTms)] = 0
+  
+  #calculates how many games each team has played  
+  GmsPlayed = c()
+  for(i in 1:nrow(AllTms)){
+    GmsPlayed[i] = AllTms[i,2]+AllTms[i,3]
+  }
+  AllTms = cbind(AllTms,GmsPlayed)
+  
+  #replaces team names w/ less than 6 games with NAs, removes their games  
+  for(i in 1:nrow(AllTms)){
+    for(j in 1:nrow(Seasondf)){
+      if(isTRUE(AllTms[i,1] == Seasondf[j,3]) && AllTms[i,4] < 6){
+        Seasondf[j,3] = NA
+      }
+      if(isTRUE(AllTms[i,1] == Seasondf[j,5]) && AllTms[i,4] < 6){
+        Seasondf[j,5] = NA
+      }
+    }
+  }
+  Seasondf = na.omit(Seasondf)
+  Seasondf = Seasondf[Seasondf$AwayScore!=Seasondf$HomeScore,]
+  
+  #finds winner,loser for all games, puts them into new column in data frame  
+  ValidTms = data.frame(table(cbind(Seasondf$AwayTeam,Seasondf$HomeTeam)))
+  Winner = c(rep(0,times=nrow(Seasondf)))
+  Loser = c(rep(0,times=nrow(Seasondf)))
+  Seasondf = cbind(Seasondf,Winner,Loser)
+
+  for(i in 1:nrow(Seasondf)){
+    if(Seasondf$HomeScore[i] > Seasondf$AwayScore[i]){
+      Seasondf$Winner[i] = Seasondf$HomeTeam[i]
+    }else{
+      Seasondf$Winner[i] = Seasondf$AwayTeam[i]
+    }
+    if(Seasondf$HomeScore[i] < Seasondf$AwayScore[i]){
+      Seasondf$Loser[i] = Seasondf$HomeTeam[i]
+    }else{
+      Seasondf$Loser[i] = Seasondf$AwayTeam[i]
+    }
+  }
+  
+  #counts team wins/losses, builds final data frame, adds opponents column  
+  WinsTable = data.frame(table(Seasondf$Winner))
+  LossTable = data.frame(table(Seasondf$Loser))
+  TeamWinsLosses = merge(WinsTable,LossTable, by="Var1",all.x=TRUE,all.y=TRUE)
+  TeamWinsLosses[is.na(TeamWinsLosses)] = 0
+  TeamWinsLosses = TeamWinsLosses[order(TeamWinsLosses[,1]), ]
+  colnames(TeamWinsLosses)  = c("Team","Wins","Losses")
+  TeamWinsLosses = cbind(TeamWinsLosses,"Opponents" = c(rep(0,times = nrow(TeamWinsLosses))))
+  
+  #generates a vector of opponents for each team, puts them in opponent list  
+  for(j in 1:nrow(TeamWinsLosses)){
+    Home <- Seasondf[which(Seasondf[,5]==TeamWinsLosses[j,1]),3]
+    Away <- Seasondf[which(Seasondf[,3]==TeamWinsLosses[j,1]),5]
+    OppList <- c(Home,Away)
+    TeamWinsLosses$Opponents[j] <- list(OppList)
+  }
+
+  #draws total games played from my final dataframe
+  #k is a vector of the sum of games for each team
+  j <- TeamWinsLosses$Opponents
+  k <- c()
+  for(i in 1:nrow(TeamWinsLosses)){
+    k[i] <- length(j[[i]])
+  }
+  
+  #populates the diagonals & off diagonals in the colley matrix
+  ColleyMat <- matrix(nrow=nrow(TeamWinsLosses),ncol=nrow(TeamWinsLosses),byrow=FALSE)
+  for(i in 1:nrow(TeamWinsLosses)){
+    for(j in 1:nrow(TeamWinsLosses)){
+      if(i == j){
+        ColleyMat[i,j] = 2+k[i]
+      }
+      if(i != j){          
+        opponents <- TeamWinsLosses[[i,4]]
+        ColleyMat[[i,j]] = -1*sum(opponents == TeamWinsLosses[j,1]) #times in opp vector of team i that team j shows up
+      }
+    }
+  }
+  
+  #creates the vector needed for the matrix algebra
+  p <- TeamWinsLosses$Wins
+  q <- TeamWinsLosses$Losses
+  n <- c()
+  for(i in 1:nrow(TeamWinsLosses)){
+    n[i] <- 1+(p[i]-q[i])/2
+  }
+  #solves the matrix algebra for matrix ColleyMat and vector n[i]
+  score <- solve(ColleyMat,n)
+  
+  #creates a data frame out of team names and Colley scores
+  solution <- data.frame(TeamWinsLosses$Team,score)
+  
+  #orders the solution by Colley score
+  Solution <- solution[ order(-solution[,2], solution[,1]),]
+  
+  #prints the final product, "Solution"
+  print(Solution)
+}
+
+#Input year as parameter, resulting the FBS rankings for eligible teams
+2010_Rankings = Colley(2010)
